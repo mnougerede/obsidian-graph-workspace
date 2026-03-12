@@ -15,10 +15,22 @@ const RATIO_HIGH_ZOOM = 0.75; // <= this: zoomed in   → show all labels
 const COLOUR_ORPHAN = "#8899aa"; // muted blue-grey
 const COLOUR_HUB = "#4a9edd";    // bright, slightly warm blue
 
+interface LayoutSettings {
+	iterations: number;
+	scalingRatio: number;
+	gravity: number;
+}
+
 export class GraphWorkspaceView extends ItemView {
 	private sigma: InstanceType<typeof Sigma> | null = null;
 	private cameraUpdatedHandler: (() => void) | null = null;
 	private previewLeaf: WorkspaceLeaf | null = null;
+	private settingsPanel: HTMLElement | null = null;
+	private layoutSettings: LayoutSettings = {
+		iterations: 500,
+		scalingRatio: 10,
+		gravity: 1,
+	};
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -43,7 +55,7 @@ export class GraphWorkspaceView extends ItemView {
 		const graphEl = container.createDiv({ cls: "graph-workspace-container" });
 
 		const graph = this.buildGraph();
-		this.layoutNodes(graph);
+		this.layoutNodes(graph, this.layoutSettings);
 
 		// Precompute the top-~10%-by-degree threshold for low-zoom label hiding.
 		const degrees: number[] = [];
@@ -59,7 +71,8 @@ export class GraphWorkspaceView extends ItemView {
 
 		this.sigma = new Sigma(graph, graphEl, {
 			renderEdgeLabels: false,
-			defaultEdgeColor: "#c8c8c8",
+			labelColor: { color: "#dcddde" },
+			defaultEdgeColor: "#4a4a4a",
 			// Thin edges so they don't compete visually with nodes and labels.
 			edgeReducer: (_edge, data) => ({ ...data, size: 0.5 }),
 			// Zoom-dependent label visibility.
@@ -95,6 +108,9 @@ export class GraphWorkspaceView extends ItemView {
 		this.sigma.on("clickNode", ({ node }) => {
 			void this.openPreview(node);
 		});
+
+		// Inject the settings panel overlay into the graph container.
+		this.settingsPanel = this.buildSettingsPanel(graphEl, graph);
 	}
 
 	async onClose(): Promise<void> {
@@ -106,6 +122,110 @@ export class GraphWorkspaceView extends ItemView {
 			this.sigma.kill();
 			this.sigma = null;
 		}
+		if (this.settingsPanel) {
+			this.settingsPanel.remove();
+			this.settingsPanel = null;
+		}
+	}
+
+	/**
+	 * Build and inject a collapsible settings panel overlay into the graph
+	 * container. Returns the panel root element.
+	 */
+	private buildSettingsPanel(
+		graphEl: HTMLElement,
+		graph: InstanceType<typeof Graph>,
+	): HTMLElement {
+		const panel = graphEl.createDiv({ cls: "gw-settings-panel" });
+
+		// ── Toggle button (gear icon) ──────────────────────────────────────────
+		const toggleBtn = panel.createEl("button", {
+			cls: "gw-settings-toggle",
+			attr: { "aria-label": "Toggle graph settings", title: "Graph settings" },
+		});
+		// SVG gear icon (inline, no external dependency).
+		toggleBtn.innerHTML =
+			`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+			`<circle cx="12" cy="12" r="3"/>` +
+			`<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>` +
+			`</svg>`;
+
+		// ── Body (collapsible) ─────────────────────────────────────────────────
+		const body = panel.createDiv({ cls: "gw-settings-body" });
+
+		// Helper: create a labelled slider row.
+		const makeSlider = (
+			label: string,
+			min: number,
+			max: number,
+			step: number,
+			value: number,
+			onChange: (v: number) => void,
+		): void => {
+			const row = body.createDiv({ cls: "gw-settings-row" });
+			const labelEl = row.createEl("label", { cls: "gw-settings-label" });
+			const valueSpan = labelEl.createSpan({ cls: "gw-settings-value" });
+			valueSpan.textContent = String(value);
+			labelEl.prepend(label + "\u00a0"); // non-breaking space before value
+			const input = row.createEl("input", {
+				cls: "gw-settings-slider",
+				attr: {
+					type: "range",
+					min: String(min),
+					max: String(max),
+					step: String(step),
+					value: String(value),
+				},
+			});
+			input.addEventListener("input", () => {
+				const v = Number(input.value);
+				valueSpan.textContent = String(v);
+				onChange(v);
+			});
+		};
+
+		makeSlider(
+			"Layout iterations",
+			50, 1000, 50,
+			this.layoutSettings.iterations,
+			(v) => { this.layoutSettings.iterations = v; },
+		);
+		makeSlider(
+			"Spread",
+			1, 50, 1,
+			this.layoutSettings.scalingRatio,
+			(v) => { this.layoutSettings.scalingRatio = v; },
+		);
+		makeSlider(
+			"Gravity",
+			0.1, 5, 0.1,
+			this.layoutSettings.gravity,
+			(v) => { this.layoutSettings.gravity = v; },
+		);
+
+		// ── Re-run layout button ───────────────────────────────────────────────
+		const rerunBtn = body.createEl("button", {
+			cls: "gw-settings-rerun",
+			text: "Re-run layout",
+		});
+		rerunBtn.addEventListener("click", () => {
+			if (!this.sigma) return;
+			this.layoutNodes(graph, this.layoutSettings);
+			this.sigma.refresh();
+		});
+
+		// ── Toggle behaviour ───────────────────────────────────────────────────
+		let expanded = false;
+		const setExpanded = (open: boolean) => {
+			expanded = open;
+			body.style.display = open ? "block" : "none";
+			toggleBtn.classList.toggle("gw-settings-toggle--active", open);
+		};
+		setExpanded(false); // start collapsed
+
+		toggleBtn.addEventListener("click", () => setExpanded(!expanded));
+
+		return panel;
 	}
 
 	/**
@@ -214,21 +334,21 @@ export class GraphWorkspaceView extends ItemView {
 	/**
 	 * Apply a force-directed layout using ForceAtlas2.
 	 * Random positions are assigned first (required by ForceAtlas2), then the
-	 * algorithm runs synchronously for a fixed number of iterations so that
-	 * connected notes cluster naturally before Sigma renders.
+	 * algorithm runs synchronously for the requested number of iterations so
+	 * that connected notes cluster naturally before Sigma renders.
 	 */
-	private layoutNodes(graph: InstanceType<typeof Graph>): void {
+	private layoutNodes(
+		graph: InstanceType<typeof Graph>,
+		settings: LayoutSettings,
+	): void {
 		// ForceAtlas2 requires existing positions — seed with random layout.
 		randomLayout.assign(graph);
 
-		// Use fewer iterations for very large graphs to keep startup fast.
-		const iterations = graph.order > 500 ? 300 : 500;
-
 		forceAtlas2.assign(graph, {
-			iterations,
+			iterations: settings.iterations,
 			settings: {
-				gravity: 1,
-				scalingRatio: 10,
+				gravity: settings.gravity,
+				scalingRatio: settings.scalingRatio,
 				barnesHutOptimize: true,
 			},
 		});
