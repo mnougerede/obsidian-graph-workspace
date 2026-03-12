@@ -1,6 +1,8 @@
 import { ItemView, MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
 import Graph from "graphology";
 import { Sigma } from "sigma";
+import forceAtlas2 from "graphology-layout-forceatlas2";
+import randomLayout from "graphology-layout/random";
 
 export const VIEW_TYPE = "graph-workspace-view";
 
@@ -210,18 +212,25 @@ export class GraphWorkspaceView extends ItemView {
 	}
 
 	/**
-	 * Assign evenly-spaced positions on a unit circle with slight radial noise.
-	 * Sigma handles zoom/pan from there; a force-layout is out of scope for Phase 1.
+	 * Apply a force-directed layout using ForceAtlas2.
+	 * Random positions are assigned first (required by ForceAtlas2), then the
+	 * algorithm runs synchronously for a fixed number of iterations so that
+	 * connected notes cluster naturally before Sigma renders.
 	 */
 	private layoutNodes(graph: InstanceType<typeof Graph>): void {
-		const count = graph.order;
-		let i = 0;
-		graph.forEachNode((node) => {
-			const angle = (2 * Math.PI * i) / Math.max(count, 1);
-			const r = 0.8 + Math.random() * 0.4;
-			graph.setNodeAttribute(node, "x", r * Math.cos(angle));
-			graph.setNodeAttribute(node, "y", r * Math.sin(angle));
-			i++;
+		// ForceAtlas2 requires existing positions — seed with random layout.
+		randomLayout.assign(graph);
+
+		// Use fewer iterations for very large graphs to keep startup fast.
+		const iterations = graph.order > 500 ? 300 : 500;
+
+		forceAtlas2.assign(graph, {
+			iterations,
+			settings: {
+				gravity: 1,
+				scalingRatio: 10,
+				barnesHutOptimize: true,
+			},
 		});
 	}
 }
