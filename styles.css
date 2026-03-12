@@ -4,3 +4,104 @@
 	position: relative;
 	background-color: var(--background-primary);
 }
+
+/* ── Settings panel overlay ─────────────────────────────────────────────── */
+
+.gw-settings-panel {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 4px;
+}
+
+/* Gear toggle button */
+.gw-settings-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: color 0.15s, background 0.15s;
+}
+
+.gw-settings-toggle:hover,
+.gw-settings-toggle--active {
+	color: var(--text-normal);
+	background: var(--background-secondary-alt);
+}
+
+.gw-settings-toggle svg {
+	display: block;
+	flex-shrink: 0;
+}
+
+/* Collapsible body */
+.gw-settings-body {
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 12px 14px;
+	min-width: 220px;
+}
+
+/* Slider rows */
+.gw-settings-row {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 10px;
+}
+
+.gw-settings-row:last-of-type {
+	margin-bottom: 0;
+}
+
+.gw-settings-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.gw-settings-value {
+	color: var(--text-normal);
+	font-variant-numeric: tabular-nums;
+	min-width: 2.5ch;
+	text-align: right;
+}
+
+.gw-settings-slider {
+	width: 100%;
+	accent-color: var(--interactive-accent);
+	cursor: pointer;
+}
+
+/* Re-run button */
+.gw-settings-rerun {
+	display: block;
+	width: 100%;
+	margin-top: 12px;
+	padding: 5px 10px;
+	border: none;
+	border-radius: 4px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+	transition: background 0.15s;
+}
+
+.gw-settings-rerun:hover {
+	background: var(--interactive-accent-hover);
+}
