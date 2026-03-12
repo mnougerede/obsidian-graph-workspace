@@ -1,25 +1,25 @@
-import { Plugin, WorkspaceLeaf } from "obsidian";
+import { Plugin } from "obsidian";
 import { GraphWorkspaceView, VIEW_TYPE } from "./view";
 
 export default class GraphWorkspacePlugin extends Plugin {
 	async onload(): Promise<void> {
 		this.registerView(VIEW_TYPE, (leaf) => new GraphWorkspaceView(leaf));
 
-		this.addRibbonIcon("git-fork", "Open Graph Workspace", () => {
-			this.activateView();
+		this.addRibbonIcon("git-fork", "Open graph workspace", () => {
+			void this.activateView();
 		});
 
 		this.addCommand({
-			id: "open-graph-workspace",
-			name: "Open Graph Workspace",
+			id: "open",
+			name: "Open graph workspace",
 			callback: () => {
-				this.activateView();
+				void this.activateView();
 			},
 		});
 	}
 
 	onunload(): void {
-		this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+		// Leaves are cleaned up automatically by Obsidian when the plugin unloads
 	}
 
 	private async activateView(): Promise<void> {

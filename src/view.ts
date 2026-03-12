@@ -16,7 +16,7 @@ export class GraphWorkspaceView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return "Graph Workspace";
+		return "Graph workspace";
 	}
 
 	getIcon(): string {
