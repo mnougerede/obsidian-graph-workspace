@@ -11,7 +11,7 @@ export default class GraphWorkspacePlugin extends Plugin {
 
 		this.addCommand({
 			id: "open",
-			name: "Open graph workspace",
+			name: "Open",
 			callback: () => {
 				void this.activateView();
 			},
@@ -27,12 +27,12 @@ export default class GraphWorkspacePlugin extends Plugin {
 
 		const existing = workspace.getLeavesOfType(VIEW_TYPE);
 		if (existing.length > 0 && existing[0]) {
-			workspace.revealLeaf(existing[0]);
+			await workspace.revealLeaf(existing[0]);
 			return;
 		}
 
 		const leaf = workspace.getLeaf("tab");
 		await leaf.setViewState({ type: VIEW_TYPE, active: true });
-		workspace.revealLeaf(leaf);
+		await workspace.revealLeaf(leaf);
 	}
 }
