@@ -290,9 +290,9 @@ export class GraphWorkspaceView extends ItemView {
 				cls: "gw-settings-checkbox",
 				attr: { type: "checkbox" },
 			});
-			(input as HTMLInputElement).checked = value;
+			input.checked = value;
 			input.addEventListener("change", () => {
-				onChange((input as HTMLInputElement).checked);
+				onChange(input.checked);
 			});
 		};
 
