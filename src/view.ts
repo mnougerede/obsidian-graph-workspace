@@ -1,7 +1,7 @@
 import { ItemView, MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
 import Graph from "graphology";
 import { Sigma } from "sigma";
-import forceAtlas2 from "graphology-layout-forceatlas2";
+import FA2Layout from "graphology-layout-forceatlas2/worker";
 import randomLayout from "graphology-layout/random";
 
 export const VIEW_TYPE = "graph-workspace-view";
@@ -16,20 +16,20 @@ const COLOUR_ORPHAN = "#8899aa"; // muted blue-grey
 const COLOUR_HUB = "#4a9edd";    // bright, slightly warm blue
 
 interface LayoutSettings {
-	iterations: number;
-	scalingRatio: number;
 	gravity: number;
+	scalingRatio: number;
 }
 
 export class GraphWorkspaceView extends ItemView {
 	private sigma: InstanceType<typeof Sigma> | null = null;
+	private layout: InstanceType<typeof FA2Layout> | null = null;
+	private graph: InstanceType<typeof Graph> | null = null;
 	private cameraUpdatedHandler: (() => void) | null = null;
 	private previewLeaf: WorkspaceLeaf | null = null;
 	private settingsPanel: HTMLElement | null = null;
 	private layoutSettings: LayoutSettings = {
-		iterations: 500,
-		scalingRatio: 10,
 		gravity: 1,
+		scalingRatio: 10,
 	};
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -54,8 +54,11 @@ export class GraphWorkspaceView extends ItemView {
 
 		const graphEl = container.createDiv({ cls: "graph-workspace-container" });
 
-		const graph = this.buildGraph();
-		this.layoutNodes(graph, this.layoutSettings);
+		this.graph = this.buildGraph();
+		const graph = this.graph;
+
+		// Seed positions so FA2 has a starting point.
+		randomLayout.assign(graph);
 
 		// Precompute the top-~10%-by-degree threshold for low-zoom label hiding.
 		const degrees: number[] = [];
@@ -70,9 +73,13 @@ export class GraphWorkspaceView extends ItemView {
 		let currentRatio = 1;
 
 		this.sigma = new Sigma(graph, graphEl, {
-			renderEdgeLabels: false,
+			renderLabels: true,
+			labelSize: 12,
+			labelWeight: "normal",
 			labelColor: { color: "#dcddde" },
-			defaultEdgeColor: "#4a4a4a",
+			defaultEdgeColor: "#6e6e6e",
+			defaultEdgeType: "line",
+			renderEdgeLabels: false,
 			// Thin edges so they don't compete visually with nodes and labels.
 			edgeReducer: (_edge, data) => ({ ...data, size: 0.5 }),
 			// Zoom-dependent label visibility.
@@ -109,11 +116,33 @@ export class GraphWorkspaceView extends ItemView {
 			void this.openPreview(node);
 		});
 
+		// Start the FA2 web-worker layout — runs off the main thread so the UI
+		// stays responsive while the graph animates into a settled position.
+		this.layout = new FA2Layout(graph, {
+			settings: {
+				gravity: this.layoutSettings.gravity,
+				scalingRatio: this.layoutSettings.scalingRatio,
+				barnesHutOptimize: true,
+			},
+		});
+		this.layout.start();
+
+		// Auto-stop after 3 s once the layout has settled.
+		setTimeout(() => {
+			if (this.layout?.isRunning()) this.layout.stop();
+		}, 3000);
+
 		// Inject the settings panel overlay into the graph container.
-		this.settingsPanel = this.buildSettingsPanel(graphEl, graph);
+		this.settingsPanel = this.buildSettingsPanel(graphEl);
 	}
 
 	async onClose(): Promise<void> {
+		if (this.layout) {
+			this.layout.stop();
+			this.layout.kill();
+			this.layout = null;
+		}
+		this.graph = null;
 		if (this.sigma) {
 			if (this.cameraUpdatedHandler) {
 				this.sigma.getCamera().off("updated", this.cameraUpdatedHandler);
@@ -132,10 +161,7 @@ export class GraphWorkspaceView extends ItemView {
 	 * Build and inject a collapsible settings panel overlay into the graph
 	 * container. Returns the panel root element.
 	 */
-	private buildSettingsPanel(
-		graphEl: HTMLElement,
-		graph: InstanceType<typeof Graph>,
-	): HTMLElement {
+	private buildSettingsPanel(graphEl: HTMLElement): HTMLElement {
 		const panel = graphEl.createDiv({ cls: "gw-settings-panel" });
 
 		// ── Toggle button (gear icon) ──────────────────────────────────────────
@@ -198,34 +224,68 @@ export class GraphWorkspaceView extends ItemView {
 			});
 		};
 
-		makeSlider(
-			"Layout iterations",
-			50, 1000, 50,
-			this.layoutSettings.iterations,
-			(v) => { this.layoutSettings.iterations = v; },
-		);
+		// Declare the button reference early so syncBtn and restartLayout can
+		// close over it; the DOM element is appended below after the sliders.
+		// The definite-assignment assertion (!) is safe: all uses of layoutBtn
+		// are inside event handlers that fire only after this function returns.
+		let layoutBtn!: HTMLButtonElement;
+
+		// Sync button label to actual running state.
+		const syncBtn = () => {
+			layoutBtn.textContent = this.layout?.isRunning() ? "Stop layout" : "Start layout";
+		};
+
+		// When a slider changes: kill the current layout, recreate with updated
+		// settings, and restart so the new parameters take effect immediately.
+		const restartLayout = () => {
+			if (!this.graph) return;
+			if (this.layout) {
+				this.layout.stop();
+				this.layout.kill();
+			}
+			this.layout = new FA2Layout(this.graph, {
+				settings: {
+					gravity: this.layoutSettings.gravity,
+					scalingRatio: this.layoutSettings.scalingRatio,
+					barnesHutOptimize: true,
+				},
+			});
+			this.layout.start();
+			syncBtn();
+		};
+
 		makeSlider(
 			"Spread",
 			1, 50, 1,
 			this.layoutSettings.scalingRatio,
-			(v) => { this.layoutSettings.scalingRatio = v; },
+			(v) => {
+				this.layoutSettings.scalingRatio = v;
+				restartLayout();
+			},
 		);
 		makeSlider(
 			"Gravity",
 			0.1, 5, 0.1,
 			this.layoutSettings.gravity,
-			(v) => { this.layoutSettings.gravity = v; },
+			(v) => {
+				this.layoutSettings.gravity = v;
+				restartLayout();
+			},
 		);
 
-		// ── Re-run layout button ───────────────────────────────────────────────
-		const rerunBtn = body.createEl("button", {
+		// ── Start / Stop layout toggle (appended after sliders) ───────────────
+		layoutBtn = body.createEl("button", {
 			cls: "gw-settings-rerun",
-			text: "Re-run layout",
+			text: "Stop layout",
 		});
-		rerunBtn.addEventListener("click", () => {
-			if (!this.sigma) return;
-			this.layoutNodes(graph, this.layoutSettings);
-			this.sigma.refresh();
+		layoutBtn.addEventListener("click", () => {
+			if (!this.layout) return;
+			if (this.layout.isRunning()) {
+				this.layout.stop();
+			} else {
+				this.layout.start();
+			}
+			syncBtn();
 		});
 
 		// ── Toggle behaviour ───────────────────────────────────────────────────
@@ -238,6 +298,12 @@ export class GraphWorkspaceView extends ItemView {
 		setExpanded(false); // start collapsed
 
 		toggleBtn.addEventListener("click", () => setExpanded(!expanded));
+
+		// Poll every 500 ms to keep button label in sync with the auto-stop timer.
+		const syncInterval = setInterval(() => {
+			if (!this.layout) { clearInterval(syncInterval); return; }
+			syncBtn();
+		}, 500);
 
 		return panel;
 	}
@@ -343,29 +409,6 @@ export class GraphWorkspaceView extends ItemView {
 		});
 
 		return graph;
-	}
-
-	/**
-	 * Apply a force-directed layout using ForceAtlas2.
-	 * Random positions are assigned first (required by ForceAtlas2), then the
-	 * algorithm runs synchronously for the requested number of iterations so
-	 * that connected notes cluster naturally before Sigma renders.
-	 */
-	private layoutNodes(
-		graph: InstanceType<typeof Graph>,
-		settings: LayoutSettings,
-	): void {
-		// ForceAtlas2 requires existing positions — seed with random layout.
-		randomLayout.assign(graph);
-
-		forceAtlas2.assign(graph, {
-			iterations: settings.iterations,
-			settings: {
-				gravity: settings.gravity,
-				scalingRatio: settings.scalingRatio,
-				barnesHutOptimize: true,
-			},
-		});
 	}
 }
 
