@@ -10,6 +10,10 @@ import {
 	Simulation,
 	SimulationNodeDatum,
 	SimulationLinkDatum,
+	ForceManyBody,
+	ForceLink,
+	ForceCenter,
+	ForceCollide,
 } from "d3-force";
 import randomLayout from "graphology-layout/random";
 
@@ -292,8 +296,7 @@ export class GraphWorkspaceView extends ItemView {
 			this.layoutSettings.chargeStrength,
 			(v) => {
 				this.layoutSettings.chargeStrength = v;
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(this.simulation?.force("charge") as any)?.strength(v);
+				this.simulation?.force<ForceManyBody<SimNode>>("charge")?.strength(v);
 				reheat();
 			},
 		);
@@ -303,8 +306,7 @@ export class GraphWorkspaceView extends ItemView {
 			this.layoutSettings.linkDistance,
 			(v) => {
 				this.layoutSettings.linkDistance = v;
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(this.simulation?.force("link") as any)?.distance(v);
+				this.simulation?.force<ForceLink<SimNode, SimulationLinkDatum<SimNode>>>("link")?.distance(v);
 				reheat();
 			},
 		);
@@ -314,8 +316,7 @@ export class GraphWorkspaceView extends ItemView {
 			this.layoutSettings.centerStrength,
 			(v) => {
 				this.layoutSettings.centerStrength = v;
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(this.simulation?.force("center") as any)?.strength(v);
+				this.simulation?.force<ForceCenter<SimNode>>("center")?.strength(v);
 				reheat();
 			},
 		);
@@ -325,8 +326,7 @@ export class GraphWorkspaceView extends ItemView {
 			this.layoutSettings.collideRadius,
 			(v) => {
 				this.layoutSettings.collideRadius = v;
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(this.simulation?.force("collide") as any)?.radius((d: SimNode) => d.size + v);
+				this.simulation?.force<ForceCollide<SimNode>>("collide")?.radius((d) => d.size + v);
 				reheat();
 			},
 		);
