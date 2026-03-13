@@ -1,7 +1,16 @@
 import { ItemView, MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
 import Graph from "graphology";
 import { Sigma } from "sigma";
-import FA2Layout from "graphology-layout-forceatlas2/worker";
+import {
+	forceSimulation,
+	forceLink,
+	forceManyBody,
+	forceCenter,
+	forceCollide,
+	Simulation,
+	SimulationNodeDatum,
+	SimulationLinkDatum,
+} from "d3-force";
 import randomLayout from "graphology-layout/random";
 
 export const VIEW_TYPE = "graph-workspace-view";
@@ -16,24 +25,31 @@ const COLOUR_ORPHAN = "#8899aa"; // muted blue-grey
 const COLOUR_HUB = "#4a9edd";    // bright, slightly warm blue
 
 interface LayoutSettings {
-	gravity: number;
-	scalingRatio: number;
-	strongGravityMode: boolean;
-	edgeWeightInfluence: number;
+	chargeStrength: number;   // forceManyBody.strength
+	linkDistance: number;     // forceLink.distance
+	centerStrength: number;   // forceCenter.strength
+	collideRadius: number;    // forceCollide padding added to node size
+}
+
+interface SimNode extends SimulationNodeDatum {
+	id: string;
+	size: number;
+	[key: string]: unknown;
 }
 
 export class GraphWorkspaceView extends ItemView {
 	private sigma: InstanceType<typeof Sigma> | null = null;
-	private layout: InstanceType<typeof FA2Layout> | null = null;
+	private simulation: Simulation<SimNode, SimulationLinkDatum<SimNode>> | null = null;
+	private simulationRunning = false;
 	private graph: InstanceType<typeof Graph> | null = null;
 	private cameraUpdatedHandler: (() => void) | null = null;
 	private previewLeaf: WorkspaceLeaf | null = null;
 	private settingsPanel: HTMLElement | null = null;
 	private layoutSettings: LayoutSettings = {
-		gravity: 0.5,
-		scalingRatio: 20,
-		strongGravityMode: true,
-		edgeWeightInfluence: 1,
+		chargeStrength: -150,
+		linkDistance: 80,
+		centerStrength: 0.05,
+		collideRadius: 10,
 	};
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -61,21 +77,8 @@ export class GraphWorkspaceView extends ItemView {
 		this.graph = this.buildGraph();
 		const graph = this.graph;
 
-		// Seed positions so FA2 has a starting point.
+		// Seed positions so d3-force has a sensible starting point.
 		randomLayout.assign(graph);
-
-		// Place orphans (degree-0 nodes) in a fixed ring outside the main
-		// cluster before FA2 starts. Marking them fixed means FA2 ignores them
-		// entirely — they have no edges to drive their placement anyway.
-		const orphanNodes = graph.nodes().filter(n => graph.degree(n) === 0);
-		const orphanRadius = 500;
-		const angleStep = (2 * Math.PI) / Math.max(1, orphanNodes.length);
-		orphanNodes.forEach((node, i) => {
-			const angle = i * angleStep;
-			graph.setNodeAttribute(node, "x", orphanRadius * Math.cos(angle));
-			graph.setNodeAttribute(node, "y", orphanRadius * Math.sin(angle));
-			graph.setNodeAttribute(node, "fixed", true);
-		});
 
 		// Precompute the top-~10%-by-degree threshold for low-zoom label hiding.
 		const degrees: number[] = [];
@@ -120,8 +123,6 @@ export class GraphWorkspaceView extends ItemView {
 		});
 
 		// Update the closed-over ratio whenever the camera moves.
-		// Sigma re-renders automatically after a camera update, so the next
-		// nodeReducer call will see the fresh ratio without an explicit refresh().
 		const camera = this.sigma.getCamera();
 		this.cameraUpdatedHandler = () => {
 			currentRatio = camera.ratio;
@@ -129,41 +130,62 @@ export class GraphWorkspaceView extends ItemView {
 		camera.on("updated", this.cameraUpdatedHandler);
 
 		// Open a note preview in a split pane when a node is clicked.
-		// Guard against duplicate registrations if onOpen() is called more than once.
 		this.sigma.removeAllListeners("clickNode");
 		this.sigma.on("clickNode", ({ node }) => {
 			void this.openPreview(node);
 		});
 
-		// Start the FA2 web-worker layout — runs off the main thread so the UI
-		// stays responsive while the graph animates into a settled position.
-		this.layout = new FA2Layout(graph, {
-			settings: {
-				gravity: this.layoutSettings.gravity,
-				scalingRatio: this.layoutSettings.scalingRatio,
-				strongGravityMode: this.layoutSettings.strongGravityMode,
-				edgeWeightInfluence: this.layoutSettings.edgeWeightInfluence,
-				barnesHutOptimize: true,
-				slowDown: 5,
-			},
-		});
-		this.layout.start();
+		// Build d3 node and link arrays from the Graphology graph.
+		const simNodes: SimNode[] = graph.nodes().map(n => ({
+			id: n,
+			...(graph.getNodeAttributes(n) as { size: number; [key: string]: unknown }),
+		}));
 
-		// Auto-stop after 3 s once the layout has settled.
-		setTimeout(() => {
-			if (this.layout?.isRunning()) this.layout.stop();
-		}, 3000);
+		const simLinks: SimulationLinkDatum<SimNode>[] = graph.edges().map(e => ({
+			source: graph.source(e),
+			target: graph.target(e),
+		}));
+
+		// Create the d3-force simulation. All forces run on the main thread via
+		// d3-timer (requestAnimationFrame-backed), keeping the UI responsive.
+		this.simulation = forceSimulation<SimNode>(simNodes)
+			.force("link", forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks)
+				.id((d) => d.id)
+				.distance(this.layoutSettings.linkDistance)
+				.strength(0.3))
+			.force("charge", forceManyBody<SimNode>()
+				.strength(this.layoutSettings.chargeStrength))
+			.force("center", forceCenter<SimNode>(0, 0)
+				.strength(this.layoutSettings.centerStrength))
+			.force("collide", forceCollide<SimNode>()
+				.radius((d) => d.size + this.layoutSettings.collideRadius));
+
+		this.simulationRunning = true;
+
+		// On each tick, write positions back to Graphology so Sigma picks them up.
+		this.simulation.on("tick", () => {
+			simNodes.forEach(node => {
+				graph.setNodeAttribute(node.id, "x", node.x ?? 0);
+				graph.setNodeAttribute(node.id, "y", node.y ?? 0);
+			});
+			this.sigma?.refresh();
+		});
+
+		// Track when the simulation naturally decays to a stop.
+		this.simulation.on("end", () => {
+			this.simulationRunning = false;
+		});
 
 		// Inject the settings panel overlay into the graph container.
 		this.settingsPanel = this.buildSettingsPanel(graphEl);
 	}
 
 	async onClose(): Promise<void> {
-		if (this.layout) {
-			this.layout.stop();
-			this.layout.kill();
-			this.layout = null;
+		if (this.simulation) {
+			this.simulation.stop();
+			this.simulation = null;
 		}
+		this.simulationRunning = false;
 		this.graph = null;
 		if (this.sigma) {
 			if (this.cameraUpdatedHandler) {
@@ -246,91 +268,66 @@ export class GraphWorkspaceView extends ItemView {
 			});
 		};
 
-		// Declare the button reference early so syncBtn and restartLayout can
-		// close over it; the DOM element is appended below after the sliders.
-		// The definite-assignment assertion (!) is safe: all uses of layoutBtn
-		// are inside event handlers that fire only after this function returns.
+		// Declare the button reference early so syncBtn and reheat can close over it.
 		let layoutBtn!: HTMLButtonElement;
 
 		// Sync button label to actual running state.
 		const syncBtn = () => {
-			layoutBtn.textContent = this.layout?.isRunning() ? "Stop layout" : "Start layout";
+			layoutBtn.textContent = this.simulationRunning ? "Stop layout" : "Start layout";
 		};
 
-		// When a setting changes: kill the current layout, recreate with updated
-		// settings, and restart so the new parameters take effect immediately.
-		const restartLayout = () => {
-			if (!this.graph) return;
-			if (this.layout) {
-				this.layout.stop();
-				this.layout.kill();
-			}
-			this.layout = new FA2Layout(this.graph, {
-				settings: {
-					gravity: this.layoutSettings.gravity,
-					scalingRatio: this.layoutSettings.scalingRatio,
-					strongGravityMode: this.layoutSettings.strongGravityMode,
-					edgeWeightInfluence: this.layoutSettings.edgeWeightInfluence,
-					barnesHutOptimize: true,
-					slowDown: 5,
-				},
-			});
-			this.layout.start();
+		// Update a specific force in-place, then reheat the simulation so the
+		// change is immediately visible without rebuilding from scratch.
+		const reheat = () => {
+			if (!this.simulation) return;
+			this.simulation.alpha(0.3).restart();
+			this.simulationRunning = true;
 			syncBtn();
 		};
 
-		// Helper: create a labelled checkbox toggle row.
-		const makeToggle = (
-			label: string,
-			value: boolean,
-			onChange: (v: boolean) => void,
-		): void => {
-			const row = body.createDiv({ cls: "gw-settings-row gw-settings-row--toggle" });
-			const labelEl = row.createEl("label", { cls: "gw-settings-label" });
-			labelEl.textContent = label;
-			const input = row.createEl("input", {
-				cls: "gw-settings-checkbox",
-				attr: { type: "checkbox" },
-			});
-			input.checked = value;
-			input.addEventListener("change", () => {
-				onChange(input.checked);
-			});
-		};
-
+		// ── d3-force sliders ───────────────────────────────────────────────────
 		makeSlider(
-			"Spread",
-			1, 50, 1,
-			this.layoutSettings.scalingRatio,
+			"Repulsion",
+			-300, -10, 10,
+			this.layoutSettings.chargeStrength,
 			(v) => {
-				this.layoutSettings.scalingRatio = v;
-				restartLayout();
+				this.layoutSettings.chargeStrength = v;
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(this.simulation?.force("charge") as any)?.strength(v);
+				reheat();
 			},
 		);
 		makeSlider(
-			"Gravity",
-			0.1, 5, 0.1,
-			this.layoutSettings.gravity,
+			"Link distance",
+			20, 200, 10,
+			this.layoutSettings.linkDistance,
 			(v) => {
-				this.layoutSettings.gravity = v;
-				restartLayout();
+				this.layoutSettings.linkDistance = v;
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(this.simulation?.force("link") as any)?.distance(v);
+				reheat();
 			},
 		);
 		makeSlider(
-			"Cluster tightness",
-			0, 2, 0.1,
-			this.layoutSettings.edgeWeightInfluence,
+			"Centring",
+			0.01, 0.2, 0.01,
+			this.layoutSettings.centerStrength,
 			(v) => {
-				this.layoutSettings.edgeWeightInfluence = v;
-				restartLayout();
+				this.layoutSettings.centerStrength = v;
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(this.simulation?.force("center") as any)?.strength(v);
+				reheat();
 			},
 		);
-		makeToggle(
-			"Strong gravity",
-			this.layoutSettings.strongGravityMode,
+		makeSlider(
+			"Node spacing",
+			5, 30, 1,
+			this.layoutSettings.collideRadius,
 			(v) => {
-				this.layoutSettings.strongGravityMode = v;
-				restartLayout();
+				this.layoutSettings.collideRadius = v;
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(this.simulation?.force("collide") as any)?.radius((d: SimNode) => d.size + v);
+				reheat();
 			},
 		);
 
@@ -340,11 +337,13 @@ export class GraphWorkspaceView extends ItemView {
 			text: "Stop layout",
 		});
 		layoutBtn.addEventListener("click", () => {
-			if (!this.layout) return;
-			if (this.layout.isRunning()) {
-				this.layout.stop();
+			if (!this.simulation) return;
+			if (this.simulationRunning) {
+				this.simulation.stop();
+				this.simulationRunning = false;
 			} else {
-				this.layout.start();
+				this.simulation.alpha(0.3).restart();
+				this.simulationRunning = true;
 			}
 			syncBtn();
 		});
@@ -360,9 +359,9 @@ export class GraphWorkspaceView extends ItemView {
 
 		toggleBtn.addEventListener("click", () => setExpanded(!expanded));
 
-		// Poll every 500 ms to keep button label in sync with the auto-stop timer.
+		// Poll every 500 ms to keep button label in sync with natural decay.
 		const syncInterval = setInterval(() => {
-			if (!this.layout) { clearInterval(syncInterval); return; }
+			if (!this.simulation) { clearInterval(syncInterval); return; }
 			syncBtn();
 		}, 500);
 
