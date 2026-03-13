@@ -146,10 +146,18 @@ export class GraphWorkspaceView extends ItemView {
 		});
 
 		// Build d3 node and link arrays from the Graphology graph.
-		const simNodes: SimNode[] = graph.nodes().map(n => ({
-			id: n,
-			...(graph.getNodeAttributes(n) as { size: number; [key: string]: unknown }),
-		}));
+		// Deliberately omit x/y from the spread so d3 owns those properties
+		// entirely. If the existing Graphology x/y values were spread in,
+		// d3 treats them as already-settled positions and barely moves nodes
+		// when forces change — making sliders appear to have no effect.
+		const simNodes: SimNode[] = graph.nodes().map(n => {
+			const attrs = graph.getNodeAttributes(n) as { size: number; label?: string; x?: number; y?: number; [key: string]: unknown };
+			return {
+				id: n,
+				size: attrs.size,
+				label: attrs.label,
+			};
+		});
 
 		const simLinks: SimulationLinkDatum<SimNode>[] = graph.edges().map(e => ({
 			source: graph.source(e),
