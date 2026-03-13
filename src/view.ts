@@ -52,7 +52,7 @@ export class GraphWorkspaceView extends ItemView {
 	private layoutSettings: LayoutSettings = {
 		chargeStrength: -150,
 		linkDistance: 80,
-		centerStrength: 0.05,
+		centerStrength: 0.01,
 		collideRadius: 10,
 	};
 
@@ -73,6 +73,12 @@ export class GraphWorkspaceView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
+		// Guard: stop any previous simulation before re-initialising.
+		if (this.simulation) {
+			this.simulation.stop();
+			this.simulation = null;
+		}
+
 		const container = this.containerEl.children[1] as HTMLElement;
 		container.empty();
 
@@ -152,7 +158,11 @@ export class GraphWorkspaceView extends ItemView {
 
 		// Create the d3-force simulation. All forces run on the main thread via
 		// d3-timer (requestAnimationFrame-backed), keeping the UI responsive.
+		// alphaDecay slows cooling so sliders have more time to take effect;
+		// alphaMin sets the threshold at which the simulation stops naturally.
 		this.simulation = forceSimulation<SimNode>(simNodes)
+			.alphaDecay(0.01)
+			.alphaMin(0.001)
 			.force("link", forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks)
 				.id((d) => d.id)
 				.distance(this.layoutSettings.linkDistance)
@@ -284,7 +294,7 @@ export class GraphWorkspaceView extends ItemView {
 		// change is immediately visible without rebuilding from scratch.
 		const reheat = () => {
 			if (!this.simulation) return;
-			this.simulation.alpha(0.3).restart();
+			this.simulation.alpha(0.5).restart();
 			this.simulationRunning = true;
 			syncBtn();
 		};
@@ -342,7 +352,7 @@ export class GraphWorkspaceView extends ItemView {
 				this.simulation.stop();
 				this.simulationRunning = false;
 			} else {
-				this.simulation.alpha(0.3).restart();
+				this.simulation.alpha(0.5).restart();
 				this.simulationRunning = true;
 			}
 			syncBtn();
