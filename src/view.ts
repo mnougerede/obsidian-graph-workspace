@@ -129,6 +129,8 @@ export class GraphWorkspaceView extends ItemView {
 		camera.on("updated", this.cameraUpdatedHandler);
 
 		// Open a note preview in a split pane when a node is clicked.
+		// Guard against duplicate registrations if onOpen() is called more than once.
+		this.sigma.removeAllListeners("clickNode");
 		this.sigma.on("clickNode", ({ node }) => {
 			void this.openPreview(node);
 		});
@@ -377,6 +379,15 @@ export class GraphWorkspaceView extends ItemView {
 		if (!(file instanceof TFile)) return;
 
 		if (this.previewLeaf) {
+			// A null parent means the leaf has been detached from the workspace
+			// (e.g. the user closed the split pane). Treat it as gone so we don't
+			// hold a stale reference that silently fails on openFile().
+			if (!this.previewLeaf.parent) {
+				this.previewLeaf = null;
+			}
+		}
+
+		if (this.previewLeaf) {
 			const view = this.previewLeaf.view;
 			// If this exact file is already displayed, do nothing.
 			if (view instanceof MarkdownView && view.file?.path === path) {
@@ -386,15 +397,21 @@ export class GraphWorkspaceView extends ItemView {
 			try {
 				await this.previewLeaf.openFile(file);
 				return;
-			} catch {
-				// The leaf was closed by the user — fall through and create a new one.
+			} catch (e) {
+				// The leaf became invalid — fall through and create a new one.
+				console.error("Graph Workspace: failed to reuse preview leaf", e);
 				this.previewLeaf = null;
 			}
 		}
 
 		// Open a vertical split alongside the current view, keeping the graph stable.
-		this.previewLeaf = this.app.workspace.getLeaf("split");
-		await this.previewLeaf.openFile(file);
+		try {
+			this.previewLeaf = this.app.workspace.getLeaf("split");
+			await this.previewLeaf.openFile(file);
+		} catch (e) {
+			console.error("Graph Workspace: failed to open file in preview", e);
+			this.previewLeaf = null;
+		}
 	}
 
 	private buildGraph(): InstanceType<typeof Graph> {
