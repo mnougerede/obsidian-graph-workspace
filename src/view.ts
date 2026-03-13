@@ -18,6 +18,8 @@ const COLOUR_HUB = "#4a9edd";    // bright, slightly warm blue
 interface LayoutSettings {
 	gravity: number;
 	scalingRatio: number;
+	strongGravityMode: boolean;
+	edgeWeightInfluence: number;
 }
 
 export class GraphWorkspaceView extends ItemView {
@@ -28,8 +30,10 @@ export class GraphWorkspaceView extends ItemView {
 	private previewLeaf: WorkspaceLeaf | null = null;
 	private settingsPanel: HTMLElement | null = null;
 	private layoutSettings: LayoutSettings = {
-		gravity: 1,
-		scalingRatio: 10,
+		gravity: 0.5,
+		scalingRatio: 20,
+		strongGravityMode: true,
+		edgeWeightInfluence: 1,
 	};
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -59,6 +63,19 @@ export class GraphWorkspaceView extends ItemView {
 
 		// Seed positions so FA2 has a starting point.
 		randomLayout.assign(graph);
+
+		// Place orphans (degree-0 nodes) in a fixed ring outside the main
+		// cluster before FA2 starts. Marking them fixed means FA2 ignores them
+		// entirely — they have no edges to drive their placement anyway.
+		const orphanNodes = graph.nodes().filter(n => graph.degree(n) === 0);
+		const orphanRadius = 500;
+		const angleStep = (2 * Math.PI) / Math.max(1, orphanNodes.length);
+		orphanNodes.forEach((node, i) => {
+			const angle = i * angleStep;
+			graph.setNodeAttribute(node, "x", orphanRadius * Math.cos(angle));
+			graph.setNodeAttribute(node, "y", orphanRadius * Math.sin(angle));
+			graph.setNodeAttribute(node, "fixed", true);
+		});
 
 		// Precompute the top-~10%-by-degree threshold for low-zoom label hiding.
 		const degrees: number[] = [];
@@ -122,7 +139,10 @@ export class GraphWorkspaceView extends ItemView {
 			settings: {
 				gravity: this.layoutSettings.gravity,
 				scalingRatio: this.layoutSettings.scalingRatio,
+				strongGravityMode: this.layoutSettings.strongGravityMode,
+				edgeWeightInfluence: this.layoutSettings.edgeWeightInfluence,
 				barnesHutOptimize: true,
+				slowDown: 5,
 			},
 		});
 		this.layout.start();
@@ -235,7 +255,7 @@ export class GraphWorkspaceView extends ItemView {
 			layoutBtn.textContent = this.layout?.isRunning() ? "Stop layout" : "Start layout";
 		};
 
-		// When a slider changes: kill the current layout, recreate with updated
+		// When a setting changes: kill the current layout, recreate with updated
 		// settings, and restart so the new parameters take effect immediately.
 		const restartLayout = () => {
 			if (!this.graph) return;
@@ -247,11 +267,33 @@ export class GraphWorkspaceView extends ItemView {
 				settings: {
 					gravity: this.layoutSettings.gravity,
 					scalingRatio: this.layoutSettings.scalingRatio,
+					strongGravityMode: this.layoutSettings.strongGravityMode,
+					edgeWeightInfluence: this.layoutSettings.edgeWeightInfluence,
 					barnesHutOptimize: true,
+					slowDown: 5,
 				},
 			});
 			this.layout.start();
 			syncBtn();
+		};
+
+		// Helper: create a labelled checkbox toggle row.
+		const makeToggle = (
+			label: string,
+			value: boolean,
+			onChange: (v: boolean) => void,
+		): void => {
+			const row = body.createDiv({ cls: "gw-settings-row gw-settings-row--toggle" });
+			const labelEl = row.createEl("label", { cls: "gw-settings-label" });
+			labelEl.textContent = label;
+			const input = row.createEl("input", {
+				cls: "gw-settings-checkbox",
+				attr: { type: "checkbox" },
+			});
+			(input as HTMLInputElement).checked = value;
+			input.addEventListener("change", () => {
+				onChange((input as HTMLInputElement).checked);
+			});
 		};
 
 		makeSlider(
@@ -269,6 +311,23 @@ export class GraphWorkspaceView extends ItemView {
 			this.layoutSettings.gravity,
 			(v) => {
 				this.layoutSettings.gravity = v;
+				restartLayout();
+			},
+		);
+		makeSlider(
+			"Cluster tightness",
+			0, 2, 0.1,
+			this.layoutSettings.edgeWeightInfluence,
+			(v) => {
+				this.layoutSettings.edgeWeightInfluence = v;
+				restartLayout();
+			},
+		);
+		makeToggle(
+			"Strong gravity",
+			this.layoutSettings.strongGravityMode,
+			(v) => {
+				this.layoutSettings.strongGravityMode = v;
 				restartLayout();
 			},
 		);
