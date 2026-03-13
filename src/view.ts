@@ -294,9 +294,9 @@ export class GraphWorkspaceView extends ItemView {
 		// change is immediately visible without rebuilding from scratch.
 		const reheat = () => {
 			if (!this.simulation) return;
-			console.log("[reheat] alpha BEFORE:", this.simulation.alpha(), "simulationRunning:", this.simulationRunning);
+			console.debug("[reheat] alpha BEFORE:", this.simulation.alpha(), "simulationRunning:", this.simulationRunning);
 			this.simulation.alpha(0.5).restart();
-			console.log("[reheat] alpha AFTER:", this.simulation.alpha(), "simulationRunning:", this.simulationRunning);
+			console.debug("[reheat] alpha AFTER:", this.simulation.alpha(), "simulationRunning:", this.simulationRunning);
 			this.simulationRunning = true;
 			syncBtn();
 		};
@@ -307,7 +307,7 @@ export class GraphWorkspaceView extends ItemView {
 			-300, -10, 10,
 			this.layoutSettings.chargeStrength,
 			(v) => {
-				console.log("[repulsion onChange] v:", v, "simulation truthy:", !!this.simulation, "charge force:", this.simulation?.force("charge"));
+				console.debug("[repulsion onChange] v:", v, "simulation truthy:", !!this.simulation, "charge force:", this.simulation?.force("charge"));
 				this.layoutSettings.chargeStrength = v;
 				this.simulation?.force<ForceManyBody<SimNode>>("charge")?.strength(v);
 				reheat();
