@@ -52,8 +52,8 @@ export class GraphWorkspaceView extends ItemView {
 	private layoutSettings: LayoutSettings = {
 		chargeStrength: -150,
 		linkDistance: 80,
-		centerStrength: 0.01,
-		collideRadius: 10,
+		centerStrength: 0.03,
+		collideRadius: 2,
 	};
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -333,7 +333,7 @@ export class GraphWorkspaceView extends ItemView {
 		);
 		makeSlider(
 			"Centring",
-			0.01, 0.2, 0.01,
+			0.005, 0.2, 0.005,
 			this.layoutSettings.centerStrength,
 			(v) => {
 				this.layoutSettings.centerStrength = v;
@@ -343,7 +343,7 @@ export class GraphWorkspaceView extends ItemView {
 		);
 		makeSlider(
 			"Node spacing",
-			5, 30, 1,
+			0, 10, 0.5,
 			this.layoutSettings.collideRadius,
 			(v) => {
 				this.layoutSettings.collideRadius = v;
@@ -495,7 +495,7 @@ export class GraphWorkspaceView extends ItemView {
 			const t = maxLogDegree > 0 ? Math.log1p(degree) / maxLogDegree : 0;
 
 			// Size: 3 px (orphan) → 17 px (max-degree hub).
-			const size = 3 + t * 14;
+			const size = 2 + t * 6;
 
 			// Colour: interpolate between orphan grey-blue and hub bright-blue.
 			const color = interpolateHex(COLOUR_ORPHAN, COLOUR_HUB, t);
